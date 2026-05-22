@@ -1,127 +1,11 @@
-name: Convert Yolo Detect Models
+name: Convert Local ONNX to OM Model
 
 # 触发工作流的事件
 on:
   workflow_dispatch:
 
 jobs:
-  pt2onnx:
-    strategy:
-      matrix:
-        runs-on: [ubuntu-22.04]
-    runs-on: ${{ matrix.runs-on }}
-    container:
-      image: python:3.11-slim
-      options: --privileged
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 1000
-        fetch-tags: true
-
-    - name: Run build script
-      run: |
-        # ⚠️ 将 libgl1-mesa-glx 替换为 libgl1
-        apt-get update && apt-get install -y --no-install-recommends \
-          wget \
-          libgl1 \
-          libglib2.0-0 \
-          libsm6 \
-          libxext6 \
-          libxrender-dev \
-          libgomp1 \
-          git
-        
-        # 先安装ultralytics以获取所有依赖
-        pip install ultralytics
-        
-        # 安装其他必要的依赖
-        pip install onnx onnxruntime onnxsim 
-        pip install opencv-python pillow matplotlib pyyaml seaborn pandas
-        pip install numpy torch torchvision tqdm tensorboard
-        pip install timm==1.0.7 thop efficientnet_pytorch==0.7.1 einops grad-cam==1.4.8 dill==0.3.8 albumentations==1.4.11 pytorch_wavelets==1.3.0 tidecv PyWavelets
-        
-        # 卸载ultralytics以使用本地版本
-        pip uninstall -y ultralytics
-        
-        # 设置PYTHONPATH以使用本地ultralytics包
-        export PYTHONPATH=$PYTHONPATH:$(pwd)
-        cd yolo
-        mkdir -pv onnx
-        cd onnx
-        wget https://github.com/solitarychi1d/model_convert/releases/download/PT/best.pt -O yolo.pt
-        
-        # 打印Python路径和导入信息以便调试
-        python -c "import sys; print(f'Python Path: {sys.path}')"
-        python -c "import sys; from pathlib import Path; print(f'Current directory: {Path.cwd()}'); print(f'Parent directory in path: {Path.cwd().parent in [Path(p) for p in sys.path]}')"
-        
-        # 尝试导入ultralytics看是否成功
-        python -c "import ultralytics; print(f'Ultralytics version: {ultralytics.__version__}')"
-        
-        # 运行转换脚本
-        python ../export_det_v11.pyc -w yolo.pt --sim
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: onnx_artifacts
-        path: yolo/onnx/*.onnx
-
-  onnx2rknn:
-    needs: [pt2onnx]
-    strategy:
-      matrix:
-        runs-on: [ubuntu-22.04]
-    runs-on: ${{ matrix.runs-on }}
-    container:
-      image: kaylor/rk3588_onnx2rknn:2.3.0
-      options: --privileged
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 1000
-        fetch-tags: true
-
-    - name: Download artifacts from pt2onnx
-      uses: actions/download-artifact@v4
-      with:
-        name: onnx_artifacts
-        path: onnx_artifacts
-
-    - name: Run build script
-      run: |
-        # 安装可能需要的系统依赖
-        if command -v apt-get &> /dev/null; then
-          apt-get update && apt-get install -y --no-install-recommends \
-            libgl1 \
-            libglib2.0-0 \
-            libsm6 \
-            libxext6 \
-            libxrender-dev
-        fi
-        
-        # 安装dill包
-        pip install dill
-        
-        SRC_PATH=$(pwd)
-        cd yolo
-        mkdir -pv rknn
-        cp -vr ${SRC_PATH}/onnx_artifacts/*.onnx ./rknn/
-        # 直接使用可用的Python版本执行转换脚本
-        python convert.pyc rknn/yolo.onnx rk3588 i8 rknn/yolo.rknn
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: rknn_artifacts
-        path: yolo/rknn/*.rknn
-
   onnx2om:
-    needs: [pt2onnx]
     strategy:
       matrix:
         runs-on: [ubuntu-22.04]
@@ -134,16 +18,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 1000
-        fetch-tags: true
-        
-    - name: Download artifacts from pt2onnx
-      uses: actions/download-artifact@v4
-      with:
-        name: onnx_artifacts
-        path: onnx_artifacts
+        fetch-depth: 1  # 只需要最新代码即可，加快检出速度
 
-    - name: Run build script
+    - name: Run ATC Convert Script
       shell: bash
       run: |
         # 安装可能需要的系统依赖
@@ -163,11 +40,32 @@ jobs:
         
         SRC_PATH=$(pwd)
         mkdir -pv om
-        cp -vr ${SRC_PATH}/onnx_artifacts/*.onnx ./om/
+        
+        # 【修改点】从本地仓库读取 ONNX 文件
+        # 优先查找根目录下的 yolo.onnx，如果没有则匹配任意 .onnx 文件
+        if [ -f "${SRC_PATH}/yolo.onnx" ]; then
+          echo "Found yolo.onnx in repository root."
+          cp -v "${SRC_PATH}/yolo.onnx" ./om/
+        elif ls ${SRC_PATH}/*.onnx 1> /dev/null 2>&1; then
+          echo "Found ONNX file(s) in repository root."
+          cp -v ${SRC_PATH}/*.onnx ./om/
+        else
+          echo "Error: No ONNX file found in repository root!"
+          echo "请确保你已将改写后的 ONNX 模型文件上传到了代码仓库的根目录下。"
+          exit 1
+        fi
+        
+        # 华为昇腾环境变量配置
         source /usr/local/Ascend/ascend-toolkit/set_env.sh
         export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/x86_64-linux/devlib/:$LD_LIBRARY_PATH
+        
         cd om
-        atc --model=yolo.onnx --framework=5 --output=yolo --soc_version=Ascend310B4
+        # 动态获取复制过来的 ONNX 文件名
+        ONNX_MODEL=$(ls *.onnx | head -n 1)
+        echo "Converting model: ${ONNX_MODEL} to OM format..."
+        
+        # 执行 ATC 转换
+        atc --model="${ONNX_MODEL}" --framework=5 --output=yolo --soc_version=Ascend310B4
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

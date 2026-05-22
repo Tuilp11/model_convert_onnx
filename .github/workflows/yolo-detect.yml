@@ -4,7 +4,6 @@ name: Convert Yolo Detect Models
 on:
   workflow_dispatch:
 
-
 jobs:
   pt2onnx:
     strategy:
@@ -24,9 +23,10 @@ jobs:
 
     - name: Run build script
       run: |
+        # ⚠️ 将 libgl1-mesa-glx 替换为 libgl1
         apt-get update && apt-get install -y --no-install-recommends \
           wget \
-          libgl1-mesa-glx \
+          libgl1 \
           libglib2.0-0 \
           libsm6 \
           libxext6 \
@@ -97,7 +97,7 @@ jobs:
         # 安装可能需要的系统依赖
         if command -v apt-get &> /dev/null; then
           apt-get update && apt-get install -y --no-install-recommends \
-            libgl1-mesa-glx \
+            libgl1 \
             libglib2.0-0 \
             libsm6 \
             libxext6 \
@@ -149,7 +149,7 @@ jobs:
         # 安装可能需要的系统依赖
         if command -v apt-get &> /dev/null; then
           apt-get update && apt-get install -y --no-install-recommends \
-            libgl1-mesa-glx \
+            libgl1 \
             libglib2.0-0 \
             libsm6 \
             libxext6 \

@@ -65,7 +65,7 @@ jobs:
         echo "Converting model: ${ONNX_MODEL} to OM format..."
         
         # 执行 ATC 转换
-        atc --model="${ONNX_MODEL}" --framework=5 --output=yolo --soc_version=Ascend310B4
+        atc --model="${ONNX_MODEL}" --framework=5 --output=yolo --soc_version=Ascend310B1
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
